@@ -180,6 +180,84 @@ void view_t(const char *hunt_id, int target_id) {
     write_str(" not found.\n");
     close(fd);
 }
+
+void remove_treasure(const char *hunt_id, int target_id) {
+    char dir_path[MAX_PATH], file_path[MAX_PATH], tmp_path[MAX_PATH];
+    snprintf(dir_path, MAX_PATH, "%s/%s", HUNTS_DIR, hunt_id);
+    snprintf(file_path, MAX_PATH, "%s/%s", dir_path, TREASURE_FILE);
+    snprintf(tmp_path,  MAX_PATH, "%s/%s.tmp", dir_path, TREASURE_FILE);
+
+    int fd_in = open(file_path, O_RDONLY);
+    if (fd_in < 0) { perror("open input"); return; }
+    int fd_out = open(tmp_path,
+                      O_WRONLY|O_CREAT|O_TRUNC,
+                      0644);
+    if (fd_out < 0) { perror("open tmp"); close(fd_in); return; }
+
+    Treasure t;
+    int removed = 0;
+    while (read(fd_in, &t, sizeof(t)) == sizeof(t)) {
+        if (t.ID == target_id) {
+            removed = 1;
+            continue;  // skip writing this record
+        }
+        if (write(fd_out, &t, sizeof(t)) != sizeof(t))
+            perror("write tmp");
+    }
+    close(fd_in);
+    close(fd_out);
+
+    if (!removed) {
+        write_str("No matching treasure to remove.\n");
+        unlink(tmp_path);
+        return;
+    }
+
+    // replace original file
+    if (rename(tmp_path, file_path) < 0) {
+        perror("rename");
+        return;
+    }
+
+    log_action(hunt_id, "remove_treasure");
+    write_str("Treasure removed successfully.\n");
+}
+
+void remove_hunt(const char *hunt_id) {
+    char dir_path[MAX_PATH], path[MAX_PATH], symlink_name[MAX_PATH];
+    snprintf(dir_path, MAX_PATH, "%s/%s", HUNTS_DIR, hunt_id);
+
+    // 1) unlink all files in the hunt directory
+    DIR *d = opendir(dir_path);
+    if (!d) { perror("opendir"); return; }
+
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) {
+        if (strcmp(ent->d_name, ".") == 0 ||
+            strcmp(ent->d_name, "..") == 0)
+            continue;
+        snprintf(path, MAX_PATH, "%s/%s", dir_path, ent->d_name);
+        if (unlink(path) < 0) {
+            perror("unlink file");
+            closedir(d);
+            return;
+        }
+    }
+    closedir(d);
+
+    // 2) remove the directory itself
+    if (rmdir(dir_path) < 0) {
+        perror("rmdir");
+        return;
+    }
+
+    // 3) remove the symlink in CWD
+    snprintf(symlink_name, MAX_PATH, "logged_hunt-%s", hunt_id);
+    unlink(symlink_name);
+
+    write_str("Hunt removed successfully.\n");
+}
+
 //not implemented yet t_remove; h_remove
 int main(int argc, char *argv[]) {
     if (argc < 3) {
@@ -194,7 +272,14 @@ int main(int argc, char *argv[]) {
         list_t(argv[2]);
     } else if (strcmp(argv[1], "view") == 0 && argc == 4) {
         view_t(argv[2], atoi(argv[3]));
-    } else {
+    }
+    else if (strcmp(argv[1], "remove_treasure") == 0 && argc == 4){
+        remove_treasure(argv[2], atoi(argv[3]));
+    }
+    else if (strcmp(argv[1], "remove_hunt") == 0){
+        remove_hunt(argv[2]);
+    }
+    else {
         const char *msg = "Invalid command or arguments.\n";
         write(STDERR_FILENO, msg, strlen(msg));
     }
