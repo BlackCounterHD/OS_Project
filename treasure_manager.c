@@ -199,7 +199,7 @@ void remove_treasure(const char *hunt_id, int target_id) {
     while (read(fd_in, &t, sizeof(t)) == sizeof(t)) {
         if (t.ID == target_id) {
             removed = 1;
-            continue;  // skip writing this record
+            continue; 
         }
         if (write(fd_out, &t, sizeof(t)) != sizeof(t))
             perror("write tmp");
@@ -213,7 +213,7 @@ void remove_treasure(const char *hunt_id, int target_id) {
         return;
     }
 
-    // replace original file
+    
     if (rename(tmp_path, file_path) < 0) {
         perror("rename");
         return;
@@ -227,7 +227,7 @@ void remove_hunt(const char *hunt_id) {
     char dir_path[MAX_PATH], path[MAX_PATH], symlink_name[MAX_PATH];
     snprintf(dir_path, MAX_PATH, "%s/%s", HUNTS_DIR, hunt_id);
 
-    // 1) unlink all files in the hunt directory
+    
     DIR *d = opendir(dir_path);
     if (!d) { perror("opendir"); return; }
 
@@ -245,20 +245,20 @@ void remove_hunt(const char *hunt_id) {
     }
     closedir(d);
 
-    // 2) remove the directory itself
+    
     if (rmdir(dir_path) < 0) {
         perror("rmdir");
         return;
     }
 
-    // 3) remove the symlink in CWD
+    
     snprintf(symlink_name, MAX_PATH, "logged_hunt-%s", hunt_id);
     unlink(symlink_name);
 
     write_str("Hunt removed successfully.\n");
 }
 
-//not implemented yet t_remove; h_remove
+
 int main(int argc, char *argv[]) {
     if (argc < 3) {
         const char *msg = "Usage: ./treasure_manager <command> <hunt_id> [<id>]\n";
