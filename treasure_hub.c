@@ -9,12 +9,12 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <time.h>
+#include <stdarg.h>
 
 #define HUNTS_DIR       "hunts"
 #define TREASURE_FILE   "treasures.dat"
 #define CMD_FILE        "monitor_cmd.txt"
 #define MAX_PATH        512
-
 
 typedef struct {
     int ID, value;
@@ -23,32 +23,24 @@ typedef struct {
     char clue[150];
 } Treasure;
 
-
 static volatile sig_atomic_t got_cmd       = 0;
 static void sigusr1_handler(int _) { got_cmd = 1; }
-static void sigterm_handler(int _) {
-   
-    usleep(1000000);
-    exit(0);
-}
+static void sigterm_handler(int _) { usleep(1000000); exit(0); }
 
+static int monitor_pipe[2] = {-1, -1};
+static pid_t monitor_pid = -1;
+static int   shutting_down = 0;
 
 static void process_cmd() {
     FILE *f = fopen(CMD_FILE, "r");
-    if (!f) {
-        perror("monitor: fopen CMD_FILE");
-        return;
-    }
+    if (!f) { perror("monitor: fopen CMD_FILE"); return; }
     char line[256];
     if (!fgets(line, sizeof(line), f)) { fclose(f); return; }
     fclose(f);
     line[strcspn(line, "\n")] = 0;
-
     char *tok = strtok(line, " ");
     if (!tok) return;
-
     if (strcmp(tok, "LIST_HUNTS") == 0) {
-        
         DIR *d = opendir(HUNTS_DIR);
         if (!d) { perror("monitor: opendir"); return; }
         struct dirent *ent;
@@ -57,38 +49,30 @@ static void process_cmd() {
             if (!strcmp(ent->d_name,".") || !strcmp(ent->d_name,"..")) continue;
             char path[MAX_PATH];
             struct stat st;
-            snprintf(path, sizeof(path), "%s/%s/%s",
-                     HUNTS_DIR, ent->d_name, TREASURE_FILE);
+            snprintf(path, sizeof(path), "%s/%s/%s", HUNTS_DIR, ent->d_name, TREASURE_FILE);
             int count = 0;
             if (stat(path, &st)==0)
                 count = st.st_size / sizeof(Treasure);
-            printf("Hunt %s: %d treasures\n",
-                   ent->d_name, count);
+            printf("Hunt %s: %d treasures\n", ent->d_name, count);
         }
         closedir(d);
-
     } else if (strcmp(tok, "LIST_TREASURES") == 0) {
         char *hunt = strtok(NULL, " ");
         if (hunt) {
             char cmd[MAX_PATH];
-            snprintf(cmd, sizeof(cmd),
-                     "./treasure_manager list %s", hunt);
+            snprintf(cmd, sizeof(cmd), "./treasure_manager list %s", hunt);
             system(cmd);
         }
-
     } else if (strcmp(tok, "VIEW_TREASURE") == 0) {
         char *hunt = strtok(NULL, " ");
         char *id   = strtok(NULL, " ");
         if (hunt && id) {
             char cmd[MAX_PATH];
-            snprintf(cmd, sizeof(cmd),
-                     "./treasure_manager view %s %s",
-                     hunt, id);
+            snprintf(cmd, sizeof(cmd), "./treasure_manager view %s %s", hunt, id);
             system(cmd);
         }
     }
 }
-
 
 static void monitor_main() {
     struct sigaction sa;
@@ -97,7 +81,6 @@ static void monitor_main() {
     sigaction(SIGUSR1, &sa, NULL);
     sa.sa_handler = sigterm_handler;
     sigaction(SIGTERM, &sa, NULL);
-
     while (1) {
         pause();
         if (got_cmd) {
@@ -107,26 +90,18 @@ static void monitor_main() {
     }
 }
 
-
-static pid_t monitor_pid = -1;
-static int   shutting_down = 0;
-
-
 static void sigchld_handler(int _) {
     int status;
     pid_t pid = waitpid(monitor_pid, &status, WNOHANG);
     if (pid == monitor_pid) {
         if (WIFEXITED(status))
-            printf("Monitor exited with status %d\n",
-                   WEXITSTATUS(status));
+            printf("Monitor exited with status %d\n", WEXITSTATUS(status));
         else if (WIFSIGNALED(status))
-            printf("Monitor killed by signal %d\n",
-                   WTERMSIG(status));
+            printf("Monitor killed by signal %d\n", WTERMSIG(status));
         monitor_pid   = -1;
         shutting_down = 0;
     }
 }
-
 
 static void write_cmd(const char *fmt, ...) {
     FILE *f = fopen(CMD_FILE, "w");
@@ -139,7 +114,6 @@ static void write_cmd(const char *fmt, ...) {
     fclose(f);
 }
 
-
 static void cmd_start_monitor() {
     if (monitor_pid > 0) {
         printf("Monitor already running (pid %d)\n", monitor_pid);
@@ -150,17 +124,25 @@ static void cmd_start_monitor() {
     sa.sa_handler = sigchld_handler;
     sa.sa_flags   = SA_RESTART;
     sigaction(SIGCHLD, &sa, NULL);
-
+    if (pipe(monitor_pipe) < 0) {
+        perror("hub: pipe");
+        return;
+    }
     pid_t pid = fork();
     if (pid < 0) {
         perror("hub: fork");
+        close(monitor_pipe[0]);
+        close(monitor_pipe[1]);
         return;
     }
     if (pid == 0) {
+        close(monitor_pipe[0]);
+        dup2(monitor_pipe[1], STDOUT_FILENO);
+        close(monitor_pipe[1]);
         monitor_main();
         _exit(0);
     }
-    
+    close(monitor_pipe[1]);
     monitor_pid   = pid;
     shutting_down = 0;
     printf("Monitor started (pid %d)\n", pid);
@@ -174,10 +156,8 @@ int main() {
         line[strcspn(line, "\n")] = 0;
         char *cmd = strtok(line, " ");
         if (!cmd) continue;
-
         if (strcmp(cmd, "start_monitor") == 0) {
             cmd_start_monitor();
-
         } else if (strcmp(cmd, "list_hunts") == 0) {
             if (monitor_pid < 0)
                 printf("Error: monitor not running.\n");
@@ -186,8 +166,14 @@ int main() {
             else {
                 write_cmd("LIST_HUNTS");
                 kill(monitor_pid, SIGUSR1);
+                char buf[1024];
+                ssize_t n;
+                while ((n = read(monitor_pipe[0], buf, sizeof(buf) - 1)) > 0) {
+                    buf[n] = 0;
+                    printf("%s", buf);
+                    if (n < (ssize_t)sizeof(buf) - 1) break;
+                }
             }
-
         } else if (strcmp(cmd, "list_treasures") == 0) {
             char *hunt = strtok(NULL, " ");
             if (!hunt)
@@ -199,8 +185,14 @@ int main() {
             else {
                 write_cmd("LIST_TREASURES %s", hunt);
                 kill(monitor_pid, SIGUSR1);
+                char buf[1024];
+                ssize_t n;
+                while ((n = read(monitor_pipe[0], buf, sizeof(buf) - 1)) > 0) {
+                    buf[n] = 0;
+                    printf("%s", buf);
+                    if (n < (ssize_t)sizeof(buf) - 1) break;
+                }
             }
-
         } else if (strcmp(cmd, "view_treasure") == 0) {
             char *hunt = strtok(NULL, " ");
             char *id   = strtok(NULL, " ");
@@ -213,24 +205,57 @@ int main() {
             else {
                 write_cmd("VIEW_TREASURE %s %s", hunt, id);
                 kill(monitor_pid, SIGUSR1);
+                char buf[1024];
+                ssize_t n;
+                while ((n = read(monitor_pipe[0], buf, sizeof(buf) - 1)) > 0) {
+                    buf[n] = 0;
+                    printf("%s", buf);
+                    if (n < (ssize_t)sizeof(buf) - 1) break;
+                }
             }
-
         } else if (strcmp(cmd, "stop_monitor") == 0) {
             if (monitor_pid < 0)
                 printf("Error: monitor not running.\n");
             else {
                 shutting_down = 1;
                 kill(monitor_pid, SIGTERM);
-                printf("Sent stop request to monitor (pid %d)\n",
-                       monitor_pid);
+                printf("Sent stop request to monitor (pid %d)\n", monitor_pid);
             }
-
         } else if (strcmp(cmd, "exit") == 0) {
             if (monitor_pid > 0)
                 printf("Error: monitor still running, cannot exit.\n");
             else
                 break;
-
+        } else if (strcmp(cmd, "calculate_score") == 0) {
+            DIR *d = opendir(HUNTS_DIR);
+            if (!d) { perror("opendir hunts"); continue; }
+            struct dirent *ent;
+            while ((ent = readdir(d))) {
+                if (ent->d_type != DT_DIR) continue;
+                if (!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, "..")) continue;
+                int pf[2];
+                if (pipe(pf) < 0) { perror("pipe"); continue; }
+                pid_t pid = fork();
+                if (pid < 0) { perror("fork"); close(pf[0]); close(pf[1]); continue; }
+                if (pid == 0) {
+                    close(pf[0]);
+                    dup2(pf[1], STDOUT_FILENO);
+                    close(pf[1]);
+                    execl("./calculate_score", "calculate_score", ent->d_name, NULL);
+                    perror("execl");
+                    _exit(1);
+                }
+                close(pf[1]);
+                char buf[1024];
+                ssize_t n;
+                while ((n = read(pf[0], buf, sizeof(buf)-1)) > 0) {
+                    buf[n] = 0;
+                    printf("%s", buf);
+                }
+                close(pf[0]);
+                waitpid(pid, NULL, 0);
+            }
+            closedir(d);
         } else {
             printf("Unknown command: %s\n", cmd);
         }

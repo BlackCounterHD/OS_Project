@@ -48,13 +48,10 @@ int ensure_hunt_dir(const char *hunt_id) {
 void log_action(const char *hunt_id, const char *action) {
     char log_path[MAX_PATH];
     snprintf(log_path, MAX_PATH, "%s/%s/%s", HUNTS_DIR, hunt_id, LOG_FILE);
-
     int fd = open(log_path, O_WRONLY | O_CREAT | O_APPEND, 0644);
     if (fd == -1) return;
-
     dprintf(fd, "%s\n", action);
     close(fd);
-
     char symlink_name[MAX_PATH];
     snprintf(symlink_name, MAX_PATH, "logged_hunt-%s", hunt_id);
     unlink(symlink_name);
@@ -66,46 +63,35 @@ void add_t(const char *hunt_id) {
         perror("mkdir");
         return;
     }
-
     Treasure t;
     char input_buf[200];
-
     write_str("Enter Treasure ID: ");
     read(STDIN_FILENO, input_buf, sizeof(input_buf));
     t.ID = atoi(input_buf);
-
     write_str("Enter Username: ");
     read(STDIN_FILENO, t.user_name, sizeof(t.user_name));
     t.user_name[strcspn(t.user_name, "\n")] = 0;
-
     write_str("Enter Latitude: ");
     read(STDIN_FILENO, input_buf, sizeof(input_buf));
     t.latitude = atof(input_buf);
-
     write_str("Enter Longitude: ");
     read(STDIN_FILENO, input_buf, sizeof(input_buf));
     t.longitude = atof(input_buf);
-
     write_str("Enter Clue: ");
     read(STDIN_FILENO, t.clue, sizeof(t.clue));
     t.clue[strcspn(t.clue, "\n")] = 0;
-
     write_str("Enter Value: ");
     read(STDIN_FILENO, input_buf, sizeof(input_buf));
     t.value = atoi(input_buf);
-
     char file_path[MAX_PATH];
     snprintf(file_path, MAX_PATH, "%s/%s/%s", HUNTS_DIR, hunt_id, TREASURE_FILE);
-
     int fd = open(file_path, O_WRONLY | O_CREAT | O_APPEND, 0644);
     if (fd == -1) {
         perror("open");
         return;
     }
-
     write(fd, &t, sizeof(Treasure));
     close(fd);
-
     log_action(hunt_id, "add");
     write_str("Treasure added successfully.\n");
 }
@@ -113,26 +99,22 @@ void add_t(const char *hunt_id) {
 void list_t(const char *hunt_id) {
     char file_path[MAX_PATH];
     snprintf(file_path, MAX_PATH, "%s/%s/%s", HUNTS_DIR, hunt_id, TREASURE_FILE);
-
     struct stat st;
     if (stat(file_path, &st) == -1) {
         perror("stat");
         return;
     }
-
     write_str("Hunt ID: ");
     write_str(hunt_id);
     write_str("\nFile Size: ");
     write_int((int)st.st_size);
     write_str(" bytes\nLast Modified: ");
     write_str(ctime(&st.st_mtime));
-
     int fd = open(file_path, O_RDONLY);
     if (fd == -1) {
         perror("open");
         return;
     }
-
     Treasure t;
     write_str("\nTreasure List:\n");
     while (read(fd, &t, sizeof(Treasure)) == sizeof(Treasure)) {
@@ -144,7 +126,6 @@ void list_t(const char *hunt_id) {
         write_str(", Clue: "); write_str(t.clue);
         write_str("\n");
     }
-
     close(fd);
     log_action(hunt_id, "list");
 }
@@ -152,13 +133,11 @@ void list_t(const char *hunt_id) {
 void view_t(const char *hunt_id, int target_id) {
     char file_path[MAX_PATH];
     snprintf(file_path, MAX_PATH, "%s/%s/%s", HUNTS_DIR, hunt_id, TREASURE_FILE);
-
     int fd = open(file_path, O_RDONLY);
     if (fd == -1) {
         perror("open");
         return;
     }
-
     Treasure t;
     while (read(fd, &t, sizeof(Treasure)) == sizeof(Treasure)) {
         if (t.ID == target_id) {
@@ -174,7 +153,6 @@ void view_t(const char *hunt_id, int target_id) {
             return;
         }
     }
-
     write_str("Treasure with ID ");
     write_int(target_id);
     write_str(" not found.\n");
@@ -186,39 +164,31 @@ void remove_treasure(const char *hunt_id, int target_id) {
     snprintf(dir_path, MAX_PATH, "%s/%s", HUNTS_DIR, hunt_id);
     snprintf(file_path, MAX_PATH, "%s/%s", dir_path, TREASURE_FILE);
     snprintf(tmp_path,  MAX_PATH, "%s/%s.tmp", dir_path, TREASURE_FILE);
-
     int fd_in = open(file_path, O_RDONLY);
     if (fd_in < 0) { perror("open input"); return; }
-    int fd_out = open(tmp_path,
-                      O_WRONLY|O_CREAT|O_TRUNC,
-                      0644);
+    int fd_out = open(tmp_path, O_WRONLY|O_CREAT|O_TRUNC, 0644);
     if (fd_out < 0) { perror("open tmp"); close(fd_in); return; }
-
     Treasure t;
     int removed = 0;
     while (read(fd_in, &t, sizeof(t)) == sizeof(t)) {
         if (t.ID == target_id) {
             removed = 1;
-            continue; 
+            continue;
         }
         if (write(fd_out, &t, sizeof(t)) != sizeof(t))
             perror("write tmp");
     }
     close(fd_in);
     close(fd_out);
-
     if (!removed) {
         write_str("No matching treasure to remove.\n");
         unlink(tmp_path);
         return;
     }
-
-    
     if (rename(tmp_path, file_path) < 0) {
         perror("rename");
         return;
     }
-
     log_action(hunt_id, "remove_treasure");
     write_str("Treasure removed successfully.\n");
 }
@@ -226,11 +196,8 @@ void remove_treasure(const char *hunt_id, int target_id) {
 void remove_hunt(const char *hunt_id) {
     char dir_path[MAX_PATH], path[MAX_PATH], symlink_name[MAX_PATH];
     snprintf(dir_path, MAX_PATH, "%s/%s", HUNTS_DIR, hunt_id);
-
-    
     DIR *d = opendir(dir_path);
     if (!d) { perror("opendir"); return; }
-
     struct dirent *ent;
     while ((ent = readdir(d)) != NULL) {
         if (strcmp(ent->d_name, ".") == 0 ||
@@ -244,20 +211,14 @@ void remove_hunt(const char *hunt_id) {
         }
     }
     closedir(d);
-
-    
     if (rmdir(dir_path) < 0) {
         perror("rmdir");
         return;
     }
-
-    
     snprintf(symlink_name, MAX_PATH, "logged_hunt-%s", hunt_id);
     unlink(symlink_name);
-
     write_str("Hunt removed successfully.\n");
 }
-
 
 int main(int argc, char *argv[]) {
     if (argc < 3) {
@@ -265,24 +226,19 @@ int main(int argc, char *argv[]) {
         write(STDERR_FILENO, msg, strlen(msg));
         return 1;
     }
-
     if (strcmp(argv[1], "add") == 0) {
         add_t(argv[2]);
     } else if (strcmp(argv[1], "list") == 0) {
         list_t(argv[2]);
     } else if (strcmp(argv[1], "view") == 0 && argc == 4) {
         view_t(argv[2], atoi(argv[3]));
-    }
-    else if (strcmp(argv[1], "remove_treasure") == 0 && argc == 4){
+    } else if (strcmp(argv[1], "remove_treasure") == 0 && argc == 4) {
         remove_treasure(argv[2], atoi(argv[3]));
-    }
-    else if (strcmp(argv[1], "remove_hunt") == 0){
+    } else if (strcmp(argv[1], "remove_hunt") == 0) {
         remove_hunt(argv[2]);
-    }
-    else {
+    } else {
         const char *msg = "Invalid command or arguments.\n";
         write(STDERR_FILENO, msg, strlen(msg));
     }
-
     return 0;
 }
